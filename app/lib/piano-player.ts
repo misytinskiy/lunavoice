@@ -1,6 +1,8 @@
 import { pianoSampleUrl } from "./practice";
 
 type Voice = { source?: AudioBufferSourceNode; gain?: GainNode; held: boolean };
+// Keep decoded samples across tab visits, without retaining a running audio context.
+const decodedSamples = new Map<number, AudioBuffer>();
 /** Each physical key/pointer owns its voice, including while a sample loads. */
 export class PianoPlayer {
   private context?: AudioContext;
@@ -11,6 +13,46 @@ export class PianoPlayer {
   private disposed = false;
   private sustain = false;
   private volume = 0.6;
+  private load(midi: number): Promise<AudioBuffer> {
+    const cached = decodedSamples.get(midi);
+    if (cached) return Promise.resolve(cached);
+    const pending = this.buffers.get(midi);
+    if (pending) return pending;
+    const context = (this.context ??= new AudioContext());
+    const buffer = fetch(pianoSampleUrl(midi), {
+      signal: AbortSignal.any([
+        this.controller.signal,
+        AbortSignal.timeout(15000),
+      ]),
+    })
+      .then((r) => {
+        if (!r.ok) throw new Error("Sample unavailable");
+        return r.arrayBuffer();
+      })
+      .then((b) => context.decodeAudioData(b))
+      .then((decoded) => {
+        if (!this.disposed) decodedSamples.set(midi, decoded);
+        return decoded;
+      });
+    this.buffers.set(midi, buffer);
+    void buffer.catch(() => this.buffers.delete(midi));
+    return buffer;
+  }
+  async preload(onProgress: (loaded: number) => void) {
+    let next = 36,
+      loaded = 0;
+    const results = await Promise.allSettled(
+      Array.from({ length: 4 }, async () => {
+        while (next <= 84 && !this.disposed) {
+          await this.load(next++);
+          if (!this.disposed) onProgress(++loaded);
+        }
+      }),
+    );
+    if (this.disposed) throw new Error("Piano closed");
+    if (results.some((result) => result.status === "rejected"))
+      throw new Error("Sample unavailable");
+  }
   setVolume(value: number) {
     this.volume = Math.max(0, Math.min(1, value));
     if (this.output && this.context)
@@ -38,22 +80,7 @@ export class PianoPlayer {
     this.voices.set(id, voice);
     try {
       const resume = context.resume();
-      let buffer = this.buffers.get(midi);
-      if (!buffer) {
-        buffer = fetch(pianoSampleUrl(midi), {
-          signal: AbortSignal.any([
-            this.controller.signal,
-            AbortSignal.timeout(15000),
-          ]),
-        })
-          .then((r) => {
-            if (!r.ok) throw new Error("Sample unavailable");
-            return r.arrayBuffer();
-          })
-          .then((b) => context.decodeAudioData(b));
-        this.buffers.set(midi, buffer);
-        void buffer.catch(() => this.buffers.delete(midi));
-      }
+      const buffer = this.load(midi);
       const [, decoded] = await Promise.all([resume, buffer]);
       if (this.disposed || this.voices.get(id) !== voice) return;
       if (context.state !== "running") throw new Error("Audio unavailable");

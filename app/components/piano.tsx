@@ -24,6 +24,11 @@ export function Piano() {
   const [last, setLast] = useState<number | null>(null),
     [error, setError] = useState(false);
   const player = useRef<PianoPlayer | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loaded, setLoaded] = useState(0);
+  const [loadError, setLoadError] = useState(false);
+  const [retry, setRetry] = useState(0);
+  const ready = !loading && !loadError;
   const mapping = useMemo(() => pianoMapping(tonic, mode), [tonic, mode]);
   const allowed = useMemo(
     () => new Set(pianoNotes(tonic, mode)),
@@ -38,6 +43,26 @@ export function Piano() {
     };
   }, []);
   useEffect(() => {
+    const audio = player.current!;
+    let current = true;
+    void audio
+      .preload((count) => {
+        if (current) setLoaded(count);
+      })
+      .then(() => {
+        if (current) setLoading(false);
+      })
+      .catch(() => {
+        if (current) {
+          setLoadError(true);
+          setLoading(false);
+        }
+      });
+    return () => {
+      current = false;
+    };
+  }, [retry]);
+  useEffect(() => {
     player.current?.setVolume(volume);
   }, [volume]);
   useEffect(() => {
@@ -51,6 +76,7 @@ export function Piano() {
     }
     function down(event: KeyboardEvent) {
       if (
+        !ready ||
         event.repeat ||
         event.ctrlKey ||
         event.metaKey ||
@@ -91,7 +117,7 @@ export function Piano() {
       window.removeEventListener("blur", stop);
       document.removeEventListener("visibilitychange", visibility);
     };
-  }, [mapping]);
+  }, [mapping, ready]);
   function change(action: () => void) {
     player.current?.stop();
     setHeld(new Map());
@@ -99,7 +125,7 @@ export function Piano() {
     action();
   }
   function press(event: PointerEvent<HTMLButtonElement>, midi: number) {
-    if (event.button !== 0) return;
+    if (!ready || event.button !== 0) return;
     event.currentTarget.setPointerCapture(event.pointerId);
     const id = `pointer-${event.pointerId}`;
     setHeld((old) => new Map(old).set(id, midi));
@@ -123,7 +149,7 @@ export function Piano() {
     onPointerCancel: lift,
     onLostPointerCapture: lift,
     onKeyDown: (e: React.KeyboardEvent<HTMLButtonElement>) => {
-      if ((e.key === "Enter" || e.key === " ") && !e.repeat) {
+      if (ready && (e.key === "Enter" || e.key === " ") && !e.repeat) {
         e.preventDefault();
         setLast(midi);
         setError(false);
@@ -173,7 +199,52 @@ export function Piano() {
         </div>
         <span className="ear-badge">C2 — C6</span>
       </header>
-      <div className="piano-instrument">
+      {!ready && (
+        <div className="piano-loading" role={loadError ? "alert" : "status"}>
+          {loading && <span className="piano-spinner" aria-hidden="true" />}
+          <span>
+            {loadError
+              ? text([
+                  "Some sounds could not load. Check your connection and try again.",
+                  "Не всі звуки завантажились. Перевір з’єднання та спробуй ще раз.",
+                  "Не все звуки загрузились. Проверь соединение и попробуй ещё раз.",
+                ])
+              : text([
+                  "Preparing piano…",
+                  "Готуємо піаніно…",
+                  "Готовим пианино…",
+                ])}
+          </span>
+          {loading && (
+            <>
+              <progress
+                aria-label={text([
+                  "Loading sounds",
+                  "Завантаження звуків",
+                  "Загрузка звуков",
+                ])}
+                value={loaded}
+                max={49}
+              />
+              <span>{loaded} / 49</span>
+            </>
+          )}
+          {loadError && (
+            <button
+              className="secondary-button"
+              onClick={() => {
+                setLoading(true);
+                setLoadError(false);
+                setLoaded(0);
+                setRetry((value) => value + 1);
+              }}
+            >
+              {text(["Try again", "Спробувати ще раз", "Повторить"])}
+            </button>
+          )}
+        </div>
+      )}
+      <div className="piano-instrument" aria-busy={loading}>
         <div className="piano-console">
           <div className="piano-brand">
             LUNA
@@ -277,7 +348,7 @@ export function Piano() {
                   key={midi}
                   className={`piano-key ${isBlack ? "black" : "white"} ${active.has(midi) ? "pressed" : ""}`}
                   style={{ left: `${(position / 29) * 100}%` }}
-                  disabled={!allowed.has(midi)}
+                  disabled={!ready || !allowed.has(midi)}
                   aria-label={noteName(midi)}
                   aria-pressed={active.has(midi)}
                   {...pointers(midi)}
@@ -320,7 +391,7 @@ export function Piano() {
                 <button
                   key={code}
                   className={`piano-keycap ${midi !== undefined && active.has(midi) ? "pressed" : ""}`}
-                  disabled={midi === undefined}
+                  disabled={!ready || midi === undefined}
                   aria-label={`${keyLabel(code)}${midi === undefined ? "" : `: ${noteName(midi)}`}`}
                   {...(midi === undefined ? {} : pointers(midi))}
                 >
@@ -334,9 +405,9 @@ export function Piano() {
       </div>
       <p className="ear-note piano-footnote">
         {text([
-          "Click, touch or use your keyboard in any language. Hold several keys for chords. Unassigned keys are outside the available range; all active piano keys remain playable with the mouse. Sounds load on first use.",
-          "Грай мишею, дотиком або клавіатурою з будь-якою розкладкою. Затискай кілька клавіш для акордів. Непризначені клавіші поза доступним діапазоном; усі активні клавіші піаніно доступні мишею. Звуки завантажуються під час першої гри.",
-          "Играй мышью, касанием или клавиатурой с любой раскладкой. Зажимай несколько клавиш для аккордов. Неназначенные клавиши вне доступного диапазона; все активные клавиши пианино доступны мышью. Звуки загружаются при первой игре.",
+          "Click, touch or use your keyboard in any language. Hold several keys for chords. Unassigned keys are outside the available range; all active piano keys remain playable with the mouse.",
+          "Грай мишею, дотиком або клавіатурою з будь-якою розкладкою. Затискай кілька клавіш для акордів. Непризначені клавіші поза доступним діапазоном; усі активні клавіші піаніно доступні мишею.",
+          "Играй мышью, касанием или клавиатурой с любой раскладкой. Зажимай несколько клавиш для аккордов. Неназначенные клавиши вне доступного диапазона; все активные клавиши пианино доступны мышью.",
         ])}
       </p>
     </section>

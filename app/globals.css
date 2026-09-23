@@ -1,5 +1,42 @@
 @import "tailwindcss";
 
+.piano-loading {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 18px;
+  padding: 16px 20px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.piano-loading progress {
+  width: 120px;
+  height: 6px;
+  accent-color: var(--accent);
+}
+.piano-spinner {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: piano-spin 0.8s linear infinite;
+}
+@keyframes piano-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .piano-spinner {
+    animation: none;
+  }
+}
+
 .piano-page {
   max-width: 1380px;
   margin: 32px auto 70px;
